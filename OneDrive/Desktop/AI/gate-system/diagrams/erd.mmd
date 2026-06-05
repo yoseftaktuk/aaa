@@ -1,0 +1,83 @@
+erDiagram
+  user_service_users {
+    uuid id PK
+    string email
+    string password_hash
+    string full_name
+    string role
+    boolean is_active
+    datetime created_at
+    datetime updated_at
+  }
+
+  chip_service_chips {
+    uuid id PK
+    string uid
+    boolean is_enabled
+    uuid assigned_user_id
+    datetime created_at
+  }
+
+  chip_service_balances {
+    uuid chip_id PK
+    bigint amount_cents
+    datetime updated_at
+  }
+
+  chip_service_chip_activity {
+    int id PK
+    uuid chip_id FK
+    string event_type
+    int delta_cents
+    string description
+    datetime created_at
+  }
+
+  payment_service_transactions {
+    uuid id PK
+    int amount_cents
+    string currency
+    string method
+    string status
+    string reference
+    uuid user_id
+    uuid chip_id
+    string purpose
+    datetime created_at
+    datetime updated_at
+  }
+
+  payment_service_recharge_operations {
+    uuid id PK
+    uuid chip_id
+    uuid transaction_id
+    int amount_cents
+    string status
+    datetime created_at
+  }
+
+  access_service_access_logs {
+    int id PK
+    uuid chip_id
+    string uid
+    string decision
+    string reason
+    int fee_cents
+    int balance_before_cents
+    int balance_after_cents
+    datetime created_at
+  }
+
+  access_service_hardware_events {
+    int id PK
+    string event_type
+    string payload_json
+    datetime created_at
+  }
+
+  chip_service_chips ||--|| chip_service_balances : has
+  chip_service_chips ||--o{ chip_service_chip_activity : emits
+  payment_service_transactions ||--o{ payment_service_recharge_operations : links
+  chip_service_chips ||--o{ payment_service_transactions : "recharge/entry references"
+  chip_service_chips ||--o{ access_service_access_logs : "access attempts"
+

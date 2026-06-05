@@ -1,0 +1,21 @@
+sequenceDiagram
+  autonumber
+  participant UI as Dashboard
+  participant PS as Payment Service
+  participant Provider as Card Provider
+  participant CS as Chip Service
+  participant Redis as Redis Pub/Sub
+  participant ACS as Access Control Service
+
+  UI->>PS: POST /payments/card {amount, chip_id, purpose=recharge}
+  PS-->>UI: {transaction, checkout_url}
+  UI->>Provider: Redirect to checkout_url
+  Provider-->>PS: Webhook /webhooks/provider (succeeded)
+  PS->>Redis: Publish payment.events (payment.updated)
+  UI-->>PS: Poll /transactions/{id} (optional)
+  UI->>PS: POST /recharge?chip_id&transaction_id
+  PS-->>UI: recharge completed
+  PS->>Redis: Publish payment.events (recharge.completed)
+  Redis-->>ACS: payment/recharge event (optional use)
+  ACS->>CS: (optional) validate chip/balance for immediate UI refresh
+

@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: threat-api
+  labels:
+    app: threat-api
+    tier: backend
+spec:
+  
+  replicas: 1
+  
+  selector:
+    matchLabels:
+      app: threat-api
+  template:
+    metadata:
+      labels:
+        app: threat-api
+    spec:
+        containers:
+        - name: api
+          image: taktuk/test:v0.2
+          ports:
+          - containerPort: 8000
+            name: http 
+        env:
+        - name: MONGO_HOST
+          value: mongo-0.mongo
+        - name: MONGO_PORT
+          value: 27017
+        - name: MONGO_USERNAME
+          value: admin
+        - name: MONGO_PASSWORD
+          value: sectetpass
+        - name: MONGO_DB
+          value: my_db # תשנה את זה
+        - name: MONGO_AUTH_SOURCE
+          value: admin
+        - name: MONGO_COLLECTION
+          value: my_collection # תשנה גם את זה
