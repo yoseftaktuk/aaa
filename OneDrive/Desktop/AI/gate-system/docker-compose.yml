@@ -8,7 +8,6 @@ services:
     volumes:
       - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - user-service
       - chip-service
       - payment-service
       - hardware-service
@@ -44,19 +43,6 @@ services:
       retries: 30
     restart: unless-stopped
 
-  user-service:
-    build:
-      context: .
-      dockerfile: ./services/user-service/Dockerfile
-    env_file:
-      - ./services/user-service/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
   chip-service:
     build:
       context: .
@@ -77,8 +63,6 @@ services:
     env_file:
       - ./services/payment-service/.env
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped

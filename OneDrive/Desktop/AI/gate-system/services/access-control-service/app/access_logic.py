@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,22 +16,82 @@ from .settings import settings
 
 logger = logging.getLogger(__name__)
 
+PublishFn = Callable[[dict[str, Any]], Awaitable[None]]
+
 
 class CashSession:
-    def __init__(self) -> None:
+    def __init__(self, timeout_seconds: int) -> None:
         self._accumulated_cents = 0
         self._lock = asyncio.Lock()
+        self._timeout_seconds = max(0, timeout_seconds)
+        self._reset_task: asyncio.Task[None] | None = None
+        self._publish: PublishFn | None = None
 
     @property
     def accumulated_cents(self) -> int:
         return self._accumulated_cents
 
+    def set_publish(self, publish: PublishFn) -> None:
+        self._publish = publish
+
+    async def shutdown(self) -> None:
+        await self._cancel_reset_timer()
+
+    async def _cancel_reset_timer(self) -> None:
+        task = self._reset_task
+        self._reset_task = None
+        if task is None or task.done():
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    def _schedule_reset(self) -> None:
+        if self._timeout_seconds <= 0 or self._accumulated_cents <= 0:
+            return
+        self._reset_task = asyncio.create_task(self._reset_after_timeout())
+
+    async def _reset_after_timeout(self) -> None:
+        try:
+            await asyncio.sleep(self._timeout_seconds)
+            await self.reset_expired()
+        except asyncio.CancelledError:
+            return
+
+    async def reset_expired(self) -> None:
+        async with self._lock:
+            if self._accumulated_cents <= 0:
+                return
+            previous = self._accumulated_cents
+            self._accumulated_cents = 0
+
+        logger.info(
+            "cash_session_reset previous_total_cents=%s timeout_seconds=%s",
+            previous,
+            self._timeout_seconds,
+        )
+        if self._publish is not None:
+            await self._publish(
+                {
+                    "type": "cash.reset",
+                    "reason": "timeout",
+                    "previous_total_cents": previous,
+                    "timeout_seconds": self._timeout_seconds,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
     async def add(self, amount_cents: int) -> int:
+        await self._cancel_reset_timer()
         async with self._lock:
             self._accumulated_cents += amount_cents
-            return self._accumulated_cents
+            total = self._accumulated_cents
+        if total > 0:
+            self._schedule_reset()
+        return total
 
     async def take_fee(self, fee_cents: int) -> int:
+        await self._cancel_reset_timer()
         async with self._lock:
             paid = self._accumulated_cents
             self._accumulated_cents = max(0, self._accumulated_cents - fee_cents)

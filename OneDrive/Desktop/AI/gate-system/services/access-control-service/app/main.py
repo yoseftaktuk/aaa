@@ -25,6 +25,18 @@ from .schemas import (
     SimulateCashRequest,
     SimulateCashResponse,
 )
+from .management import (
+    ChipInfoResponse,
+    ChipTopupRequest,
+    ChipTopupResponse,
+    ManagementAuthResponse,
+    ManagementPinRequest,
+    authenticate_pin,
+    get_chip_info,
+    open_door as management_open_door,
+    require_management_token,
+    topup_chip,
+)
 from .settings import settings
 
 logger = logging.getLogger(__name__)
@@ -39,7 +51,7 @@ app = FastAPI(
 
 chip_client = ChipClient()
 hardware_client = HardwareClient()
-cash_session = CashSession()
+cash_session = CashSession(timeout_seconds=settings.cash_session_timeout_seconds)
 fanout = PubSubFanout(settings.redis_url)
 hardware_consumer: HardwareEventConsumer | None = None
 redis_client: redis.Redis | None = None
@@ -52,6 +64,7 @@ async def startup() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+    cash_session.set_publish(_publish)
     await fanout.start()
     hardware_consumer = HardwareEventConsumer(
         settings.redis_url,
@@ -62,15 +75,17 @@ async def startup() -> None:
     )
     await hardware_consumer.start()
     logger.info(
-        "startup_complete entrance_fee_cents=%s door_unlock_seconds=%s",
+        "startup_complete entrance_fee_cents=%s door_unlock_seconds=%s cash_session_timeout_seconds=%s",
         settings.entrance_fee_cents,
         settings.door_unlock_seconds,
+        settings.cash_session_timeout_seconds,
     )
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
     global redis_client, hardware_consumer
+    await cash_session.shutdown()
     if hardware_consumer is not None:
         await hardware_consumer.stop()
         hardware_consumer = None
@@ -96,6 +111,7 @@ async def healthz():
         "cash_accumulated_cents": cash_session.accumulated_cents,
         "entrance_fee_cents": settings.entrance_fee_cents,
         "door_unlock_seconds": settings.door_unlock_seconds,
+        "cash_session_timeout_seconds": settings.cash_session_timeout_seconds,
     }
 
 
@@ -155,6 +171,42 @@ async def dev_simulate_cash(req: SimulateCashRequest, db: AsyncSession = Depends
         entrance_fee_cents=settings.entrance_fee_cents,
         remaining_cents=remaining_or_accumulated if granted else 0,
     )
+
+
+@app.post("/management/auth", response_model=ManagementAuthResponse, include_in_schema=False)
+async def management_auth(req: ManagementPinRequest):
+    return await authenticate_pin(req)
+
+
+@app.get(
+    "/management/chip/{uid}",
+    response_model=ChipInfoResponse,
+    dependencies=[Depends(require_management_token)],
+    include_in_schema=False,
+)
+async def management_chip_info(uid: str):
+    return await get_chip_info(uid, chip_client)
+
+
+@app.post(
+    "/management/chip/topup",
+    response_model=ChipTopupResponse,
+    dependencies=[Depends(require_management_token)],
+    include_in_schema=False,
+)
+async def management_chip_topup(req: ChipTopupRequest):
+    return await topup_chip(req, chip_client)
+
+
+@app.post(
+    "/management/door/open",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_management_token)],
+    include_in_schema=False,
+)
+async def management_door_open():
+    await management_open_door(hardware_client)
+    return None
 
 
 @app.post("/hardware/events", status_code=status.HTTP_204_NO_CONTENT)

@@ -42,7 +42,7 @@ class PubSubFanout:
     async def _run(self) -> None:
         assert self._redis is not None
         pubsub = self._redis.pubsub()
-        await pubsub.subscribe("hardware.events", "access.events", "chip.events", "payment.events")
+        await pubsub.subscribe("hardware.events", "access.events", "chip.events")
         async for msg in self._iter_messages(pubsub):
             await self._broadcast(msg)
 
